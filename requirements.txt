@@ -1,0 +1,30 @@
+# Autonomous Road Damage Assessment System
+# Requirements for pothole detection and mapping
+
+# Core ML/CV
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Geometry and metrics
+shapely>=2.0.0
+
+# Progress tracking (CLI)
+tqdm>=4.65.0
+
+# Web Dashboard
+streamlit>=1.28.0
+streamlit-folium>=0.15.0
+folium>=0.14.0
+plotly>=5.18.0
+
+# Data handling
+pandas>=2.0.0
+
+# TensorRT (system-specific, install separately if needed)
+# tensorrt
+
+# Optional: For GPU acceleration
+# torch
+# torchvision
+

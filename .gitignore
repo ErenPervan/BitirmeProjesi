@@ -1,0 +1,62 @@
+# --- Python & Genel Gereksizler ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.DS_Store
+
+# --- Sanal Ortam (Virtual Environment) ---
+# Bilgisayarındaki kütüphaneleri git'e atmaz, sadece requirements.txt atılır.
+venv/
+env/
+.env
+.venv/
+
+# --- IDE ve Editör Ayarları ---
+.vscode/
+.idea/
+*.swp
+.cursor/
+checklist.md
+
+# --- Machine Learning & YOLO Çıktıları ---
+# YOLO eğitim ve tahmin sırasında 'runs' klasörü oluşturur, içi gereksiz doludur.
+runs/
+# Modeller çok büyük olduğu için (GitHub 100MB sınırı) yüklenmemeli.
+# Sadece kullanacağın 'best.pt' 100MB altındaysa yükleyebilirsin ama genelde ignore edilir.
+*.pt
+*.pth
+*.onnx
+*.engine
+# TensorRT cache dosyaları
+*.cache
+
+# --- Streamlit ---
+# Streamlit önbellekleri ve varsa gizli şifre dosyaları
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# --- Proje Özel Verileri (ÖNEMLİ) ---
+# Veritabanını git'e atma, her bilgisayarda temiz oluşmalı.
+*.db
+road_damage.db
+road_damage.db-journal
+
+# --- Medya ve Çıktılar ---
+# Girdi videolarını ve çıktı videolarını yükleme (Alan kaplar).
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Kanıt fotoğrafları (Snapshots) gereksiz yer kaplar.
+data/snapshots/
+output/
+input_videos/
+
+# GPS test verileri (İstersen yükleyebilirsin, test için kalsın dersen başındaki # işaretini kaldır)
+# gps_data.csv
+
+# --- Geçici Dosyalar ---
+temp/
+tmp/
