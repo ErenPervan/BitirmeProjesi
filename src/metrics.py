@@ -217,14 +217,14 @@ def get_risk_label(severity_score: float) -> str:
         severity_score: Score from 0 to 100
         
     Returns:
-        Risk label string in Turkish: 'Düşük', 'Orta', or 'Yüksek'
+        Risk label string in Turkish: 'Dusuk', 'Orta', or 'Yuksek'
     """
     priority = get_priority_level(severity_score)
     # Turkish labels for presentation
     turkish_labels = {
-        PriorityLevel.LOW: "Düşük",
+        PriorityLevel.LOW: "Dusuk",
         PriorityLevel.MEDIUM: "Orta",
-        PriorityLevel.HIGH: "Yüksek"
+        PriorityLevel.HIGH: "Yuksek"
     }
     return turkish_labels.get(priority, "Bilinmiyor")
 

@@ -46,7 +46,7 @@ class ROIConfig:
     bottom_y: float = 0.95        # 95% from top
     
     @classmethod
-    def from_percentages(cls, top_width_pct: float, bottom_width_pct: float, horizon_pct: float) -> 'ROIConfig':
+    def from_percentages(cls, top_width_pct: float, bottom_width_pct: float, horizon_pct: float, bottom_height_pct: float = 95.0, horizontal_offset_pct: float = 0.0) -> 'ROIConfig':
         """
         Create ROIConfig from simplified percentage-based sliders.
         
@@ -54,6 +54,8 @@ class ROIConfig:
             top_width_pct: Width of top edge as percentage (10-100), e.g., 40 = 40%
             bottom_width_pct: Width of bottom edge as percentage (10-100), e.g., 90 = 90%
             horizon_pct: Horizon line position as percentage (0-100), e.g., 60 = 60% from top
+            bottom_height_pct: Bottom edge Y position as percentage (50-100), e.g., 90 = 90% from top
+            horizontal_offset_pct: Horizontal shift for off-center camera (-20 to +20), e.g., 5 = 5% right shift
             
         Returns:
             ROIConfig with calculated coordinates
@@ -62,18 +64,21 @@ class ROIConfig:
         top_w = top_width_pct / 100.0
         bottom_w = bottom_width_pct / 100.0
         horizon = horizon_pct / 100.0
+        bottom_height = bottom_height_pct / 100.0
+        h_offset = horizontal_offset_pct / 100.0  # Convert to 0-1 range
         
         # Calculate centered trapezoid coordinates
         top_margin = (1.0 - top_w) / 2.0
         bottom_margin = (1.0 - bottom_w) / 2.0
         
+        # Apply horizontal offset (shift entire trapezoid left/right)
         return cls(
-            top_left_x=top_margin,
-            top_right_x=1.0 - top_margin,
+            top_left_x=max(0.0, min(1.0, top_margin + h_offset)),
+            top_right_x=max(0.0, min(1.0, 1.0 - top_margin + h_offset)),
             top_y=horizon,
-            bottom_left_x=bottom_margin,
-            bottom_right_x=1.0 - bottom_margin,
-            bottom_y=0.95  # Fixed bottom near frame edge
+            bottom_left_x=max(0.0, min(1.0, bottom_margin + h_offset)),
+            bottom_right_x=max(0.0, min(1.0, 1.0 - bottom_margin + h_offset)),
+            bottom_y=bottom_height  # Adjustable bottom position
         )
 
 
@@ -117,7 +122,8 @@ class GeometryProcessor:
         frame_width: int,
         frame_height: int,
         roi_config: Optional[ROIConfig] = None,
-        ipm_config: Optional[IPMConfig] = None
+        ipm_config: Optional[IPMConfig] = None,
+        exit_line_y_ratio: float = 0.85
     ):
         """
         Initialize the GeometryProcessor.
@@ -127,6 +133,7 @@ class GeometryProcessor:
             frame_height: Height of video frame in pixels
             roi_config: ROI configuration (uses defaults if None)
             ipm_config: IPM configuration (uses defaults if None)
+            exit_line_y_ratio: Exit line position as percentage (0.5-0.99, default 0.85)
         """
         self.frame_width = frame_width
         self.frame_height = frame_height
@@ -147,7 +154,7 @@ class GeometryProcessor:
         self.total_bev_roi_area = self._calculate_total_bev_area()
         
         # Exit line configuration (y position as percentage of frame height)
-        self.exit_line_y_ratio = 0.85  # 85% from top
+        self.exit_line_y_ratio = exit_line_y_ratio
         self.exit_line_y = int(frame_height * self.exit_line_y_ratio)
     
     def _calculate_roi_polygon(self) -> np.ndarray:
@@ -336,6 +343,26 @@ class GeometryProcessor:
         if self.total_bev_roi_area <= 0:
             return 0.0
         return bev_area / self.total_bev_roi_area
+    
+    def is_point_in_roi(self, point: Tuple[float, float]) -> bool:
+        """
+        Check if a point is inside the ROI trapezoid.
+        
+        Uses cv2.pointPolygonTest for accurate containment check.
+        
+        Args:
+            point: (x, y) coordinates in frame space
+            
+        Returns:
+            True if the point is inside or on the ROI boundary
+        """
+        result = cv2.pointPolygonTest(
+            self.roi_polygon.astype(np.int32),
+            point,
+            measureDist=False
+        )
+        # result >= 0 means inside or on the boundary
+        return result >= 0
     
     def is_past_exit_line(self, center_y: float) -> bool:
         """
@@ -559,7 +586,10 @@ def create_calibration_geometry(
     frame_height: int,
     top_width_pct: float = 40.0,
     bottom_width_pct: float = 90.0,
-    horizon_pct: float = 60.0
+    horizon_pct: float = 60.0,
+    exit_line_y_ratio: float = 0.85,
+    bottom_height_pct: float = 95.0,
+    horizontal_offset_pct: float = 0.0
 ) -> GeometryProcessor:
     """
     Create a GeometryProcessor with dynamic ROI settings for calibration.
@@ -570,19 +600,25 @@ def create_calibration_geometry(
         top_width_pct: Width of top edge as percentage (10-100)
         bottom_width_pct: Width of bottom edge as percentage (10-100)
         horizon_pct: Horizon line position as percentage (0-100)
+        exit_line_y_ratio: Exit line position as percentage ratio (0.5-0.99, default 0.85)
+        bottom_height_pct: Bottom edge Y position as percentage (50-100, default 95)
+        horizontal_offset_pct: Horizontal shift for off-center camera (-20 to +20)
         
     Returns:
         Configured GeometryProcessor instance with dynamic ROI
     """
-    roi_config = ROIConfig.from_percentages(top_width_pct, bottom_width_pct, horizon_pct)
-    return GeometryProcessor(frame_width, frame_height, roi_config=roi_config)
+    roi_config = ROIConfig.from_percentages(top_width_pct, bottom_width_pct, horizon_pct, bottom_height_pct, horizontal_offset_pct)
+    return GeometryProcessor(frame_width, frame_height, roi_config=roi_config, exit_line_y_ratio=exit_line_y_ratio)
 
 
 def get_calibration_debug_frame(
     frame: np.ndarray,
     top_width_pct: float = 40.0,
     bottom_width_pct: float = 90.0,
-    horizon_pct: float = 60.0
+    horizon_pct: float = 60.0,
+    exit_line_y_ratio: float = 85.0,
+    bottom_height_pct: float = 90.0,
+    horizontal_offset_pct: float = 0.0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate calibration debug frames with dynamic ROI.
@@ -595,6 +631,9 @@ def get_calibration_debug_frame(
         top_width_pct: Width of top edge as percentage (10-100)
         bottom_width_pct: Width of bottom edge as percentage (10-100)
         horizon_pct: Horizon line position as percentage (0-100)
+        exit_line_y_ratio: Exit line position as percentage (50-99, default 85)
+        bottom_height_pct: Bottom edge Y position as percentage (50-100, default 90)
+        horizontal_offset_pct: Horizontal shift for off-center camera (-20 to +20)
         
     Returns:
         Tuple of (original_with_roi, birds_eye_view)
@@ -602,7 +641,7 @@ def get_calibration_debug_frame(
     h, w = frame.shape[:2]
     
     # Create geometry processor with dynamic settings
-    geo = create_calibration_geometry(w, h, top_width_pct, bottom_width_pct, horizon_pct)
+    geo = create_calibration_geometry(w, h, top_width_pct, bottom_width_pct, horizon_pct, exit_line_y_ratio / 100.0, bottom_height_pct, horizontal_offset_pct)
     
     # Draw ROI on original frame (Blue color for calibration)
     original_view = frame.copy()
@@ -622,14 +661,16 @@ def get_calibration_debug_frame(
         cv2.circle(original_view, (x, y), 8, (0, 255, 255), -1)
         cv2.circle(original_view, (x, y), 8, (0, 0, 0), 2)
     
-    # Draw exit line
-    original_view = geo.draw_exit_line(original_view)
+    # Draw exit line (RED for visibility in calibration)
+    original_view = geo.draw_exit_line(original_view, color=(0, 0, 255), thickness=3)
     
     # Add labels
     cv2.putText(original_view, "Orijinal Goruntu + ROI", (10, 30), 
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     cv2.putText(original_view, f"Ust: {top_width_pct:.0f}% | Alt: {bottom_width_pct:.0f}% | Ufuk: {horizon_pct:.0f}%", 
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    cv2.putText(original_view, f"Cikis Cizgisi: {exit_line_y_ratio:.0f}% (KIRMIZI)", 
+                (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     
     # Create Bird's Eye View
     bev_size = (geo.ipm_config.output_width, geo.ipm_config.output_height)

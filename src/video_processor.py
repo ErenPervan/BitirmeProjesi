@@ -27,6 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from tqdm import tqdm
+import logging
 
 from .detector import PotholeDetector
 from .metrics import (
@@ -38,9 +39,12 @@ from .metrics import (
     get_risk_label,
     PriorityLevel
 )
+
+logger = logging.getLogger(__name__)
 from .gps_manager import GPSManager
 from .database_manager import DatabaseManager
 from .geometry_utils import GeometryProcessor
+from .depth_utils import DepthValidator
 
 
 @dataclass
@@ -211,7 +215,10 @@ class VideoProcessor:
         enable_debug_view: bool = False,
         roi_top_width: float = 40.0,
         roi_bottom_width: float = 90.0,
-        roi_horizon: float = 60.0
+        roi_horizon: float = 60.0,
+        roi_bottom_height: float = 90.0,
+        roi_horizontal_offset: float = 0.0,
+        exit_line_y_ratio: float = 85.0
     ):
         """
         Initialize the VideoProcessor.
@@ -229,6 +236,9 @@ class VideoProcessor:
             roi_top_width: Width of ROI top edge as percentage (10-100)
             roi_bottom_width: Width of ROI bottom edge as percentage (10-100)
             roi_horizon: Horizon line position as percentage (0-100)
+            roi_bottom_height: Bottom edge Y position as percentage (50-100, default 90)
+            roi_horizontal_offset: Horizontal shift for off-center camera (-20 to +20%)
+            exit_line_y_ratio: Exit line position as percentage (50-99, default 85)
             
         Raises:
             VideoProcessingError: If input video cannot be opened
@@ -242,7 +252,10 @@ class VideoProcessor:
         # Store ROI calibration parameters
         self.roi_top_width = roi_top_width
         self.roi_bottom_width = roi_bottom_width
+        self.roi_horizontal_offset = roi_horizontal_offset
         self.roi_horizon = roi_horizon
+        self.roi_bottom_height = roi_bottom_height
+        self.exit_line_y_ratio = exit_line_y_ratio
         
         # Initialize GPS Manager (strict mode - no fake data)
         self.gps_manager = GPSManager(
@@ -253,6 +266,13 @@ class VideoProcessor:
         self.db_manager: Optional[DatabaseManager] = None
         if db_path is not None:
             self.db_manager = DatabaseManager(str(db_path))
+        
+        # Initialize Depth Validator for topographic verification
+        self.depth_validator = DepthValidator()
+        if self.depth_validator.enabled:
+            print("[VideoProcessor] Depth validation enabled (Depth Anything V2)")
+        else:
+            print("[VideoProcessor] Depth validation disabled (model not available)")
         
         # Video properties (populated on open)
         self.cap: Optional[cv2.VideoCapture] = None
@@ -268,14 +288,15 @@ class VideoProcessor:
         # Active tracks for exit line logic
         self.track_data: Dict[int, TrackData] = {}
         
-        # Committed tracks (after crossing exit line)
-        self.committed_tracks: set = set()
+        # Previous frame track IDs (for lost track detection)
+        self.previous_frame_track_ids: set = set()
         
         # Statistics
         self.frames_processed: int = 0
         self.total_detections: int = 0
         self.detections_with_gps: int = 0
         self.tracks_committed: int = 0
+        self.tracks_saved_via_proximity: int = 0  # New stat for proximity saves
     
     def _open_video(self) -> None:
         """
@@ -335,19 +356,22 @@ class VideoProcessor:
         roi_config = ROIConfig.from_percentages(
             self.roi_top_width,
             self.roi_bottom_width,
-            self.roi_horizon
+            self.roi_horizon,
+            self.roi_bottom_height,
+            self.roi_horizontal_offset
         )
         self.geometry = GeometryProcessor(
             self.frame_width, 
             self.frame_height,
-            roi_config=roi_config
+            roi_config=roi_config,
+            exit_line_y_ratio=self.exit_line_y_ratio / 100.0
         )
         
         print(f"\n[VideoProcessor] Input: {self.input_path.name}")
         print(f"[VideoProcessor] Output: {self.output_path}")
         print(f"[VideoProcessor] Resolution: {self.frame_width}x{self.frame_height}")
         print(f"[VideoProcessor] FPS: {self.fps:.2f} | Frames: {self.total_frames}")
-        print(f"[VideoProcessor] ROI: Üst={self.roi_top_width}%, Alt={self.roi_bottom_width}%, Ufuk={self.roi_horizon}%")
+        print(f"[VideoProcessor] ROI: Ust={self.roi_top_width}%, Alt={self.roi_bottom_width}%, Ufuk={self.roi_horizon}%")
         print(f"[VideoProcessor] IPM Enabled: Exit Line at y={self.geometry.exit_line_y}")
         print(f"[VideoProcessor] BEV Size: {self.geometry.ipm_config.output_width}x{self.geometry.ipm_config.output_height}")
     
@@ -570,6 +594,11 @@ class VideoProcessor:
         # 1. Get polygon center for exit line check
         center_x, center_y = self.geometry.get_polygon_center(mask_polygon)
         
+        # === ROI CHECK - CRITICAL: Only process detections inside ROI ===
+        if not self.geometry.is_point_in_roi((center_x, center_y)):
+            # Detection is outside ROI - skip processing entirely
+            return frame
+        
         # 2. Convert polygon to mask and transform to BEV
         polygon_mask = self.geometry.polygon_to_mask(mask_polygon)
         bev_mask = self.geometry.transform_mask_to_birdseye(polygon_mask)
@@ -611,6 +640,26 @@ class VideoProcessor:
             track.last_longitude = lon
             self.detections_with_gps += 1
         
+        # === BEST FRAME TRACKING - UPDATE DYNAMICALLY ===
+        # Capture the frame with highest severity throughout tracking lifecycle
+        # Also ensure first frame is captured even if severity is low
+        if severity_score > track.best_severity or track.best_frame is None:
+            # Memory optimization: Only save cropped ROI area, not full frame
+            x1, y1, x2, y2 = map(int, bbox)
+            pad = 50  # Padding around detection
+            h, w = frame.shape[:2]
+            y1_crop = max(0, y1 - pad)
+            y2_crop = min(h, y2 + pad)
+            x1_crop = max(0, x1 - pad)
+            x2_crop = min(w, x2 + pad)
+            
+            track.best_frame = frame[y1_crop:y2_crop, x1_crop:x2_crop].copy()
+            track.best_bbox = bbox
+            track.best_mask_polygon = mask_polygon.copy()
+            track.best_severity = severity_score
+            track.best_relative_area = relative_area
+            track.best_circularity = circularity
+        
         # === EXIT LINE LOGIC - COMMIT ON CROSSING ===
         # Check if pothole center has crossed the exit line
         was_above_exit = not track.has_crossed_exit
@@ -620,41 +669,14 @@ class VideoProcessor:
             # First time crossing exit line - COMMIT!
             track.has_crossed_exit = True
             
-            # Capture best frame data at this moment (closest/clearest)
-            track.best_frame = frame.copy()
-            track.best_bbox = bbox
-            track.best_mask_polygon = mask_polygon.copy()
-            track.best_severity = severity_score
-            track.best_relative_area = relative_area
-            track.best_circularity = circularity
-            
-            # Save snapshot image
-            image_path = None
-            if self.db_manager is not None:
-                image_path = self.db_manager.save_snapshot(
-                    frame=frame,
-                    track_id=track_id,
-                    bbox=bbox
-                )
-            
-            # Insert into database (ONLY at exit line crossing)
-            if self.db_manager is not None:
-                self.db_manager.insert_detection(
-                    track_id=track_id,
-                    timestamp=timestamp,
-                    latitude=lat,
-                    longitude=lon,
-                    severity_score=track.avg_severity,  # Use average over all frames
-                    priority_level=priority.value,
-                    risk_label=risk_label,
-                    circularity=track.avg_circularity,
-                    relative_area=track.avg_relative_area,
-                    image_path=image_path
-                )
-            
-            track.committed_to_db = True
-            self.tracks_committed += 1
-            self.committed_tracks.add(track_id)
+            # Best frame already captured above (highest severity frame)
+            # Commit to database using helper method
+            self._commit_track_to_database(
+                track_id=track_id,
+                frame_idx=frame_idx,
+                timestamp=timestamp,
+                save_reason="Exit Line Crossed"
+            )
         
         # === VISUALIZATION ===
         
@@ -689,6 +711,174 @@ class VideoProcessor:
         
         return frame
     
+    def _handle_lost_tracks(
+        self,
+        current_track_ids: set,
+        frame_idx: int,
+        timestamp: str
+    ) -> None:
+        """
+        Handle lost/removed tracks with proximity-based save logic.
+        
+        When a track disappears near the Exit Line, assume it went under
+        the car and save it to prevent valid potholes from being discarded.
+        
+        Args:
+            current_track_ids: Set of track IDs detected in current frame
+            frame_idx: Current frame index
+            timestamp: ISO timestamp for logging
+        """
+        if self.geometry is None:
+            return
+        
+        # Find tracks that were present in previous frame but not in current
+        lost_track_ids = self.previous_frame_track_ids - current_track_ids
+        
+        if not lost_track_ids:
+            return
+        
+        # Define safety buffer (15% of frame height above exit line)
+        safety_buffer = int(self.frame_height * 0.15)
+        proximity_threshold = self.geometry.exit_line_y - safety_buffer
+        
+        for track_id in lost_track_ids:
+            # Skip if track doesn't exist
+            if track_id not in self.track_data:
+                continue
+            
+            track = self.track_data[track_id]
+            
+            # Skip if already committed (critical: prevents duplicate saves)
+            if track.committed_to_db:
+                continue
+            
+            # Check if last known position was near exit line
+            if track.last_center_y >= proximity_threshold:
+                # Track disappeared near bottom - save via proximity logic
+                print(f"[Proximity Save] Track {track_id} lost at y={track.last_center_y:.0f} "
+                      f"(threshold={proximity_threshold}, exit={self.geometry.exit_line_y})")
+                
+                # Force save to database
+                self._commit_track_to_database(
+                    track_id=track_id,
+                    frame_idx=frame_idx,
+                    timestamp=timestamp,
+                    save_reason="Proximity Logic"
+                )
+                
+                self.tracks_saved_via_proximity += 1
+    
+    def _commit_track_to_database(
+        self,
+        track_id: int,
+        frame_idx: int,
+        timestamp: str,
+        save_reason: str = "Exit Line Crossed"
+    ) -> None:
+        """
+        Commit a track to the database with snapshot saving and depth validation.
+        
+        DEPTH VALIDATION: Uses Depth Anything V2 to verify if detection is a true pothole.
+        Rejects:
+        - Bumps (tümsek) - raised surfaces
+        - Shadows (gölge) - inconsistent depth
+        - Stains/patches (leke/yama) - flat surfaces
+        
+        Args:
+            track_id: Track ID to commit
+            frame_idx: Current frame index
+            timestamp: ISO timestamp
+            save_reason: Reason for saving (for logging)
+        """
+        if track_id not in self.track_data:
+            return
+        
+        track = self.track_data[track_id]
+        
+        # Skip if already committed
+        if track.committed_to_db:
+            return
+        
+        # === DEPTH VALIDATION - CRITICAL FILTER ===
+        # Validate using depth analysis before committing
+        if track.best_frame is not None and track.best_bbox is not None:
+            # Get the full frame for depth analysis (reconstruct from crop if needed)
+            # Since best_frame is cropped, we need the original frame
+            # For now, we'll use the best_frame directly with its bbox adjusted
+            
+            # Run depth validation
+            is_valid = self.depth_validator.is_valid_pothole(track.best_frame, (0, 0, track.best_frame.shape[1], track.best_frame.shape[0]))
+            
+            if not is_valid:
+                print(f"[DepthValidator] Track {track_id} REJECTED - Not a valid pothole (bump/shadow/stain)")
+                logger.info(f"Track {track_id} rejected by depth validation")
+                # Mark as committed to prevent re-processing, but don't save to DB
+                track.committed_to_db = True
+                return
+        
+        # Get GPS coordinates
+        lat, lon = self.gps_manager.get_location(frame_idx)
+        
+        # Calculate priority
+        priority = get_priority_level(track.avg_severity)
+        risk_label = get_risk_label(track.avg_severity)
+        
+        # Save snapshot if we have best frame
+        image_path = None
+        heatmap_path = None
+        
+        if track.best_frame is not None and self.db_manager is not None:
+            print(f"[Snapshot] Attempting to save for Track {track_id} (best_frame: {track.best_frame.shape}, best_bbox: {track.best_bbox})")
+            image_path = self.db_manager.save_snapshot(
+                frame=track.best_frame,
+                track_id=track_id,
+                bbox=track.best_bbox
+            )
+            
+            # Generate and save depth heatmap
+            if track.best_bbox is not None:
+                # Use full bbox coordinates relative to cropped best_frame
+                heatmap = self.depth_validator.get_heatmap(
+                    track.best_frame,
+                    (0, 0, track.best_frame.shape[1], track.best_frame.shape[0])
+                )
+                
+                if heatmap is not None:
+                    heatmap_path = self.db_manager.save_heatmap(
+                        heatmap=heatmap,
+                        track_id=track_id
+                    )
+                    print(f"[Heatmap] Generated and saved for Track {track_id}")
+                else:
+                    print(f"[Heatmap] WARNING: Could not generate heatmap for Track {track_id}")
+        else:
+            if track.best_frame is None:
+                print(f"[Snapshot] WARNING: Track {track_id} has no best_frame!")
+            if self.db_manager is None:
+                print(f"[Snapshot] WARNING: db_manager is None!")
+        
+        # Insert into database
+        if self.db_manager is not None:
+            self.db_manager.insert_detection(
+                track_id=track_id,
+                timestamp=timestamp,
+                latitude=lat,
+                longitude=lon,
+                severity_score=track.avg_severity,
+                priority_level=priority.value,
+                risk_label=risk_label,
+                circularity=track.avg_circularity,
+                relative_area=track.avg_relative_area,
+                image_path=image_path,
+                heatmap_path=heatmap_path
+            )
+            
+            print(f"[Database] Track {track_id} committed via {save_reason} "
+                  f"(Severity: {track.avg_severity:.1f}, Priority: {priority.value}, Depth: VALIDATED)")
+        
+        track.committed_to_db = True
+        self.tracks_committed += 1
+    
     def _process_frame(
         self, 
         frame: np.ndarray, 
@@ -714,6 +904,20 @@ class VideoProcessor:
         # Extract detections
         detections = self.detector.extract_detections(results)
         
+        # Collect current frame track IDs
+        current_track_ids = set()
+        for detection in detections:
+            track_id = detection.get('track_id')
+            if track_id is not None:
+                current_track_ids.add(track_id)
+        
+        # === LOST TRACK RECOVERY ===
+        # Check for tracks that disappeared near exit line
+        self._handle_lost_tracks(current_track_ids, frame_idx, timestamp)
+        
+        # Update previous frame track IDs for next iteration
+        self.previous_frame_track_ids = current_track_ids
+        
         # Process each detection
         for detection in detections:
             frame = self._process_detection(
@@ -729,7 +933,8 @@ class VideoProcessor:
             frame = self.geometry.draw_exit_line(frame, color=(255, 0, 255), thickness=2)
         
         # Add frame counter and committed count
-        info_text = f"Frame: {frame_idx} | Committed: {self.tracks_committed}"
+        proximity_info = f" (Proximity: {self.tracks_saved_via_proximity})" if self.tracks_saved_via_proximity > 0 else ""
+        info_text = f"Frame: {frame_idx} | Committed: {self.tracks_committed}{proximity_info}"
         cv2.putText(frame, info_text, (10, self.frame_height - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
@@ -780,11 +985,12 @@ class VideoProcessor:
             
             # Reset tracking data and state
             self.track_data.clear()
-            self.committed_tracks.clear()
+            self.previous_frame_track_ids.clear()
             self.frames_processed = 0
             self.total_detections = 0
             self.detections_with_gps = 0
             self.tracks_committed = 0
+            self.tracks_saved_via_proximity = 0
             
             print(f"\n[VideoProcessor] Starting processing...")
             print(f"[VideoProcessor] Mode: IPM Enhanced (Exit Line Commit)")
@@ -826,6 +1032,8 @@ class VideoProcessor:
             print(f"[VideoProcessor] Total detections (per-frame): {self.total_detections}")
             print(f"[VideoProcessor] Unique tracks: {len(self.track_data)}")
             print(f"[VideoProcessor] Tracks committed (crossed Exit Line): {self.tracks_committed}")
+            if self.tracks_saved_via_proximity > 0:
+                print(f"[VideoProcessor] Tracks saved via Proximity Logic: {self.tracks_saved_via_proximity}")
             print(f"[VideoProcessor] Detections with GPS: {self.detections_with_gps}")
             print(f"[VideoProcessor] Output saved to: {self.output_path}")
             
@@ -904,11 +1112,12 @@ class VideoProcessor:
             
             # Reset tracking data and state
             self.track_data.clear()
-            self.committed_tracks.clear()
+            self.previous_frame_track_ids.clear()
             self.frames_processed = 0
             self.total_detections = 0
             self.detections_with_gps = 0
             self.tracks_committed = 0
+            self.tracks_saved_via_proximity = 0
             
             frame_idx = 0
             while True:
@@ -979,21 +1188,21 @@ class VideoProcessor:
         data = []
         for track in self.track_data.values():
             data.append({
-                'Pothole ID': track.track_id,
-                'Severity': round(track.avg_severity, 2),
-                'Risk Level': track.risk_label,
-                'Irregularity': round(track.avg_circularity, 4),
-                'Relative Area': round(track.avg_relative_area * 100, 4),  # As percentage
-                'Max Area': int(track.max_area),
-                'Priority': track.priority_level,
-                'Committed': track.committed_to_db,
-                'Frames': track.frame_appearances,
-                'Latitude': track.last_latitude,
-                'Longitude': track.last_longitude
+                'Cukur ID': track.track_id,
+                'Ciddiyet': round(track.avg_severity, 2),
+                'Risk Seviyesi': track.risk_label,
+                'Duzensizlik': round(track.avg_circularity, 4),
+                'Goreceli Alan': round(track.avg_relative_area * 100, 4),  # As percentage
+                'Maks Alan': int(track.max_area),
+                'Oncelik': track.priority_level,
+                'Kaydedildi': 'Evet' if track.committed_to_db else 'Hayir',
+                'Kareler': track.frame_appearances,
+                'Enlem': track.last_latitude,
+                'Boylam': track.last_longitude
             })
         
         df = pd.DataFrame(data)
-        df = df.sort_values('Severity', ascending=False)
+        df = df.sort_values('Ciddiyet', ascending=False)
         return df
     
     def process_optimized(self, status_callback=None) -> ProcessingResult:
@@ -1028,11 +1237,12 @@ class VideoProcessor:
             
             # Reset tracking data and state
             self.track_data.clear()
-            self.committed_tracks.clear()
+            self.previous_frame_track_ids.clear()
             self.frames_processed = 0
             self.total_detections = 0
             self.detections_with_gps = 0
             self.tracks_committed = 0
+            self.tracks_saved_via_proximity = 0
             
             # Performance timing
             start_time = time.time()
@@ -1106,11 +1316,11 @@ def generate_csv_report(
     CSV columns (Turkish):
     - cukur_id: Unique tracking ID
     - ciddiyet_puani: Average severity score (0-100)
-    - risk_seviyesi: Düşük/Orta/Yüksek
+    - risk_seviyesi: Dusuk/Orta/Yuksek
     - duzensizlik: Average circularity value (0-1)
     - goreceli_alan_yuzde: Average IPM-normalized area (%)
     - maksimum_alan: Maximum pixel area detected
-    - oncelik: DÜŞÜK, ORTA, or YÜKSEK
+    - oncelik: DUSUK, ORTA, or YUKSEK
     - kaydedildi: Whether crossed Exit Line
     - gorunme_sayisi: Number of frames object appeared in
     - enlem: GPS latitude (if available)
@@ -1140,7 +1350,7 @@ def generate_csv_report(
     )
     
     # Turkish priority labels
-    priority_tr = {'HIGH': 'YÜKSEK', 'MEDIUM': 'ORTA', 'LOW': 'DÜŞÜK'}
+    priority_tr = {'HIGH': 'YUKSEK', 'MEDIUM': 'ORTA', 'LOW': 'DUSUK'}
     
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
@@ -1170,14 +1380,14 @@ def generate_csv_report(
                 f"{track.avg_relative_area * 100:.4f}",
                 f"{track.max_area:.0f}",
                 priority_tr.get(track.priority_level, track.priority_level),
-                "Evet" if track.committed_to_db else "Hayır",
+                "Evet" if track.committed_to_db else "Hayir",
                 track.frame_appearances,
                 track.last_latitude if track.last_latitude else "",
                 track.last_longitude if track.last_longitude else ""
             ])
     
     print(f"[Rapor] CSV kaydedildi: {output_path}")
-    print(f"[Rapor] Toplam kayıt: {len(sorted_tracks)} (kaydedilen: {sum(1 for t in sorted_tracks if t.committed_to_db)})")
+    print(f"[Rapor] Toplam kayit: {len(sorted_tracks)} (kaydedilen: {sum(1 for t in sorted_tracks if t.committed_to_db)})")
 
 
 # =============================================================================

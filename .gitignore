@@ -1,62 +1,172 @@
-# --- Python & Genel Gereksizler ---
+# ============================================================================
+# Road Damage Assessment System - Git Ignore
+# ============================================================================
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
-*.log
-.DS_Store
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# --- Sanal Ortam (Virtual Environment) ---
-# Bilgisayarındaki kütüphaneleri git'e atmaz, sadece requirements.txt atılır.
+# --- Virtual Environment ---
 venv/
 env/
 .env
 .venv/
+ENV/
+env.bak/
+venv.bak/
 
-# --- IDE ve Editör Ayarları ---
+# --- IDE & Editors ---
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 .cursor/
-checklist.md
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
 
-# --- Machine Learning & YOLO Çıktıları ---
-# YOLO eğitim ve tahmin sırasında 'runs' klasörü oluşturur, içi gereksiz doludur.
-runs/
-# Modeller çok büyük olduğu için (GitHub 100MB sınırı) yüklenmemeli.
-# Sadece kullanacağın 'best.pt' 100MB altındaysa yükleyebilirsin ama genelde ignore edilir.
+# --- Logs ---
+*.log
+logs/
+*.log.*
+
+# --- OS Files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Machine Learning Models & Weights ---
+# Models are too large for GitHub (>100MB limit)
 *.pt
 *.pth
 *.onnx
 *.engine
-# TensorRT cache dosyaları
+*.tflite
+*.h5
+*.pkl
+*.pickle
+checkpoints/
+weights/
+*.weights
+
+# --- YOLO Outputs ---
+runs/
+yolov5/runs/
+yolov8/runs/
+ultralytics/runs/
+
+# --- TensorRT ---
 *.cache
+*.trt
+trt_engines/
 
-# --- Streamlit ---
-# Streamlit önbellekleri ve varsa gizli şifre dosyaları
-.streamlit/secrets.toml
-.streamlit/config.toml
-
-# --- Proje Özel Verileri (ÖNEMLİ) ---
-# Veritabanını git'e atma, her bilgisayarda temiz oluşmalı.
+# --- Database ---
 *.db
-road_damage.db
-road_damage.db-journal
+*.sqlite
+*.sqlite3
+*.db-journal
+road_damage.db*
 
-# --- Medya ve Çıktılar ---
-# Girdi videolarını ve çıktı videolarını yükleme (Alan kaplar).
+# --- Media Files ---
+# Input/Output videos and images
 *.mp4
 *.avi
 *.mov
 *.mkv
+*.flv
+*.wmv
+*.webm
+input_videos/
+output_videos/
 
-# Kanıt fotoğrafları (Snapshots) gereksiz yer kaplar.
+# --- Snapshots & Output ---
 data/snapshots/
 output/
-input_videos/
-
-# GPS test verileri (İstersen yükleyebilirsin, test için kalsın dersen başındaki # işaretini kaldır)
-# gps_data.csv
-
-# --- Geçici Dosyalar ---
 temp/
 tmp/
+test_output/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Testing ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# --- Documentation Build ---
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# --- Environment Variables ---
+.env
+.env.local
+.env.*.local
+
+# --- Custom Project Files ---
+checklist.md
+TODO.md
+NOTES.md
+
+# --- Keep Documentation ---
+# Important documentation files are tracked
+!README.md
+!LICENSE
+!*.md
+
+# --- Keep these directories but ignore contents ---
+data/snapshots/*
+!data/snapshots/.gitkeep
+logs/*
+!logs/.gitkeep
+output/*
+!output/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+
+# --- GPU & CUDA ---
+*.cu.o
+*.cubin
+
+# --- Compressed Files ---
+*.zip
+*.tar.gz
+*.rar
+*.7z

@@ -6,6 +6,9 @@ ultralytics>=8.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 
+# Configuration management
+pyyaml>=6.0.0
+
 # Geometry and metrics
 shapely>=2.0.0
 

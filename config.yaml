@@ -1,0 +1,89 @@
+# ============================================================================
+# Yol Hasari Degerlendirme Sistemi - Configuration File
+# Graduation Project - Autonomous Road Damage Assessment
+# ============================================================================
+
+# Model Configuration
+model:
+  path: "best1.engine"
+  confidence: 0.5
+  iou_threshold: 0.5
+  tracker_config: "bytetrack.yaml"
+
+# ROI (Region of Interest) Parameters
+# These define the trapezoid area for road detection
+roi:
+  top_width: 40.0        # Top edge width (% of frame width)
+  bottom_width: 90.0     # Bottom edge width (% of frame width)
+  horizon: 60.0          # Top edge position (% from top)
+  bottom_height: 90.0    # Bottom edge position (% from top)
+  horizontal_offset: 0.0 # Horizontal shift for off-center camera (-20 to +20%)
+  exit_line_y_ratio: 85.0  # Exit line position (% of frame height)
+
+# Processing Configuration
+processing:
+  min_track_frames: 5           # Minimum frames before committing detection
+  proximity_threshold: 0.15     # Distance threshold for lost track recovery (15%)
+  best_frame_pad: 50           # Padding around ROI for snapshot (pixels)
+  ui_update_interval: 200      # UI update frequency (every N frames)
+
+# IPM (Inverse Perspective Mapping) - Bird's Eye View
+ipm:
+  output_width: 600
+  output_height: 400
+
+# Severity Scoring Weights
+severity:
+  circularity_weight: 0.4    # Weight for shape irregularity
+  area_weight: 0.6          # Weight for relative area
+
+# Risk Classification Thresholds
+risk:
+  low_threshold: 40.0       # Below this = Low risk (Dusuk)
+  medium_threshold: 65.0    # Below this = Medium risk (Orta)
+  # Above medium_threshold = High risk (Yuksek)
+
+# Output Paths
+paths:
+  output_base: "runs/streamlit"
+  snapshot_dir: "data/snapshots"
+  logs_dir: "logs"
+  temp_dir: "temp"
+
+# Logging Configuration
+logging:
+  level: "INFO"              # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  max_file_size_mb: 10      # Max log file size before rotation
+  backup_count: 5           # Number of backup log files to keep
+  console_logging: true     # Enable console output
+  file_logging: true        # Enable file output
+
+# Video Output Settings
+video:
+  codec: "mp4v"             # Primary codec (fallback: avc1, XVID)
+  quality: 95               # JPEG quality for snapshots (0-100)
+  draw_roi: true           # Draw ROI trapezoid on output video
+  draw_exit_line: true     # Draw exit line on output video
+  draw_tracks: true        # Draw track IDs and bboxes
+
+# Database Configuration
+database:
+  auto_backup: false        # Auto backup before clearing
+  backup_on_startup: false  # Backup on application start
+
+# GPS Configuration
+gps:
+  enabled: true            # Enable GPS data processing
+  required: false          # Require GPS data (if false, allows NULL)
+
+# Performance Optimization
+performance:
+  max_memory_mb: 2048      # Maximum memory usage (MB)
+  enable_tensorrt: true    # Use TensorRT acceleration
+  batch_processing: false  # Process frames in batches (experimental)
+
+# UI Configuration
+ui:
+  theme: "dark"            # Color theme
+  show_debug_info: false   # Show debug information in UI
+  auto_refresh_interval: 1.0  # Auto-refresh interval (seconds)

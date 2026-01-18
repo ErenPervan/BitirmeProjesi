@@ -1,0 +1,2 @@
+# This file keeps the snapshots directory in version control
+# Actual snapshot images are ignored by .gitignore

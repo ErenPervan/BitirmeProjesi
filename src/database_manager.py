@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 from contextlib import contextmanager
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseError(Exception):
@@ -57,6 +60,7 @@ class DatabaseManager:
     - circularity: REAL - Shape irregularity index
     - relative_area: REAL - IPM-normalized area ratio
     - image_path: TEXT (NULLABLE) - Path to snapshot .jpg
+    - heatmap_path: TEXT (NULLABLE) - Path to depth heatmap .jpg
     - created_at: TEXT (auto-generated)
     
     Attributes:
@@ -78,6 +82,7 @@ class DatabaseManager:
         circularity REAL,
         relative_area REAL,
         image_path TEXT,
+        heatmap_path TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """
@@ -106,8 +111,8 @@ class DatabaseManager:
         if snapshots_dir:
             self.snapshots_dir = Path(snapshots_dir)
         else:
-            # Default to data/snapshots/ relative to db_path parent
-            self.snapshots_dir = self.db_path.parent.parent / "data" / "snapshots"
+            # Default to data/snapshots/ relative to each run directory
+            self.snapshots_dir = self.db_path.parent / "data" / "snapshots"
         
         # Ensure directories exist
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +120,9 @@ class DatabaseManager:
         
         # Initialize database
         self._init_database()
+        
+        logger.info(f"Database initialized: {self.db_path}")
+        logger.info(f"Snapshots directory: {self.snapshots_dir}")
         
         print(f"[Database] Initialized: {self.db_path}")
         print(f"[Database] Snapshots dir: {self.snapshots_dir}")
@@ -163,29 +171,107 @@ class DatabaseManager:
         import cv2
         from datetime import datetime
         
-        # Crop if bbox provided
-        if bbox is not None:
-            x1, y1, x2, y2 = map(int, bbox)
-            # Add padding
-            pad = 20
-            h, w = frame.shape[:2]
-            x1 = max(0, x1 - pad)
-            y1 = max(0, y1 - pad)
-            x2 = min(w, x2 + pad)
-            y2 = min(h, y2 + pad)
-            snapshot = frame[y1:y2, x1:x2]
-        else:
-            snapshot = frame
+        try:
+            # Ensure snapshots directory exists
+            self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Validate frame
+            if frame is None or frame.size == 0:
+                logger.error(f"Invalid frame for track {track_id}: frame is None or empty")
+                return ""
+            
+            # Crop if bbox provided
+            if bbox is not None:
+                x1, y1, x2, y2 = map(int, bbox)
+                # Add padding
+                pad = 20
+                h, w = frame.shape[:2]
+                x1 = max(0, x1 - pad)
+                y1 = max(0, y1 - pad)
+                x2 = min(w, x2 + pad)
+                y2 = min(h, y2 + pad)
+                
+                # Validate crop dimensions
+                if x2 <= x1 or y2 <= y1:
+                    logger.warning(f"Invalid crop dimensions for track {track_id}: ({x1},{y1})-({x2},{y2})")
+                    snapshot = frame
+                else:
+                    snapshot = frame[y1:y2, x1:x2]
+            else:
+                snapshot = frame
+            
+            # Generate filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"pothole_{track_id}_{timestamp}.jpg"
+            filepath = self.snapshots_dir / filename
+            
+            # Save image
+            success = cv2.imwrite(str(filepath), snapshot, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            
+            if success:
+                logger.debug(f"Snapshot saved: {filename} ({snapshot.shape[1]}x{snapshot.shape[0]})")
+                print(f"[Snapshot] Saved: {filename}")
+            else:
+                logger.error(f"cv2.imwrite failed for {filename} - check disk space and permissions")
+                print(f"[Snapshot] ERROR: Failed to save {filename}")
+            
+            return str(filepath) if success else ""
+            
+        except Exception as e:
+            logger.exception(f"Exception while saving snapshot for track {track_id}: {e}")
+            print(f"[Snapshot] ERROR: Exception saving pothole_{track_id}: {e}")
+            return ""
+    
+    def save_heatmap(
+        self,
+        heatmap: "np.ndarray",
+        track_id: int,
+        quality: int = 90
+    ) -> str:
+        """
+        Save a depth heatmap image for a pothole detection.
         
-        # Generate filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"pothole_{track_id}_{timestamp}.jpg"
-        filepath = self.snapshots_dir / filename
+        Args:
+            heatmap: BGR heatmap image from depth analysis
+            track_id: Track ID for filename
+            quality: JPEG quality (1-100)
+            
+        Returns:
+            Path to saved heatmap file
+        """
+        import cv2
+        from datetime import datetime
         
-        # Save image
-        cv2.imwrite(str(filepath), snapshot, [cv2.IMWRITE_JPEG_QUALITY, quality])
-        
-        return str(filepath)
+        try:
+            # Ensure snapshots directory exists
+            self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Validate heatmap
+            if heatmap is None or heatmap.size == 0:
+                logger.error(f"Invalid heatmap for track {track_id}: heatmap is None or empty")
+                return ""
+            
+            # Generate filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"heatmap_{track_id}_{timestamp}.jpg"
+            filepath = self.snapshots_dir / filename
+            
+            # Save image
+            success = cv2.imwrite(str(filepath), heatmap, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            
+            if success:
+                logger.debug(f"Heatmap saved: {filename} ({heatmap.shape[1]}x{heatmap.shape[0]})")
+                print(f"[Heatmap] Saved: {filename}")
+            else:
+                logger.error(f"cv2.imwrite failed for {filename} - check disk space and permissions")
+                print(f"[Heatmap] ERROR: Failed to save {filename}")
+            
+            return str(filepath) if success else ""
+            
+        except Exception as e:
+            logger.exception(f"Exception while saving heatmap for track {track_id}: {e}")
+            print(f"[Heatmap] ERROR: Exception saving heatmap_{track_id}: {e}")
+            return ""
     
     @contextmanager
     def _get_connection(self):
@@ -197,11 +283,21 @@ class DatabaseManager:
             
         Note:
             Connection is automatically closed after use.
+            Uses WAL mode for better concurrent access.
         """
         conn = None
         try:
-            conn = sqlite3.connect(str(self.db_path))
+            # Connect with explicit parameters for Windows file locking
+            conn = sqlite3.connect(
+                str(self.db_path),
+                timeout=10.0,  # Wait up to 10 seconds if database is locked
+                check_same_thread=False  # Allow multi-threaded access
+            )
             conn.row_factory = sqlite3.Row  # Enable dict-like access
+            
+            # Enable WAL mode for better concurrent access (reduces file locking)
+            conn.execute("PRAGMA journal_mode=WAL")
+            
             yield conn
         finally:
             if conn:
@@ -218,7 +314,8 @@ class DatabaseManager:
         risk_label: Optional[str] = None,
         circularity: Optional[float] = None,
         relative_area: Optional[float] = None,
-        image_path: Optional[str] = None
+        image_path: Optional[str] = None,
+        heatmap_path: Optional[str] = None
     ) -> int:
         """
         Insert a detection record into the database.
@@ -262,8 +359,8 @@ class DatabaseManager:
         INSERT INTO detections (
             track_id, timestamp, latitude, longitude, 
             severity_score, priority_level, risk_label,
-            circularity, relative_area, image_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            circularity, relative_area, image_path, heatmap_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
         try:
@@ -279,7 +376,8 @@ class DatabaseManager:
                     risk_label,
                     circularity,
                     relative_area,
-                    image_path
+                    image_path,
+                    heatmap_path
                 ))
                 conn.commit()
                 return cursor.lastrowid
@@ -506,11 +604,17 @@ class DatabaseManager:
                 cursor.execute("DELETE FROM detections")
                 conn.commit()
                 deleted = cursor.rowcount
-                print(f"[Veritabanı] {deleted} kayıt silindi")
+                logger.info(f"Database cleared: {deleted} records deleted")
+                print(f"[Veritabani] {deleted} kayit silindi")
+                
+                # Vacuum to release disk space and close connections properly
+                conn.execute("VACUUM")
+                
                 return deleted
                 
         except sqlite3.Error as e:
-            raise DatabaseError(f"Veritabanı temizlenemedi: {e}")
+            logger.error(f"Failed to clear database: {e}")
+            raise DatabaseError(f"Veritabani temizlenemedi: {e}")
     
     def clear_all_data(self) -> int:
         """
@@ -524,21 +628,26 @@ class DatabaseManager:
             int: Number of records deleted
             
         Warning:
-            Bu işlem geri alınamaz!
+            Bu islem geri alinamaz!
         """
-        import shutil
-        
         # Clear database records
         deleted = self.clear_all()
         
         # Clear snapshots directory
         if self.snapshots_dir.exists():
+            snapshot_count = 0
             for file in self.snapshots_dir.glob("*.jpg"):
                 try:
                     file.unlink()
-                except Exception:
-                    pass
-            print(f"[Veritabanı] Anlık görüntüler temizlendi: {self.snapshots_dir}")
+                    snapshot_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not delete snapshot {file.name}: {e}")
+            
+            if snapshot_count > 0:
+                logger.info(f"Deleted {snapshot_count} snapshot images")
+                print(f"[Veritabani] {snapshot_count} anlik goruntu temizlendi: {self.snapshots_dir}")
+        
+        return deleted
         
         return deleted
     
