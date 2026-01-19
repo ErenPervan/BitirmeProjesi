@@ -167,8 +167,7 @@ Bu proje MIT Lisansı altında lisanslanmıştır.
 ## 📚 Dökümantasyon
 
 Detaylı entegrasyon kılavuzları:
-- [Depth Integration Guide](DEPTH_INTEGRATION_GUIDE.md)
-- [Integration Checklist](INTEGRATION_CHECKLIST.md)
+https://github.com/ErenPervan/BitirmeProjesi/blob/main/DERINLIK_ENTEGRASYONU_TR.md
 
 ---
 
