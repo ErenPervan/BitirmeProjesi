@@ -167,7 +167,7 @@ Bu proje MIT Lisansı altında lisanslanmıştır.
 ## 📚 Dökümantasyon
 
 Detaylı entegrasyon kılavuzları:
-https://github.com/ErenPervan/BitirmeProjesi/blob/main/DERINLIK_ENTEGRASYONU_TR.md
-
+DERINLIK_ENTEGRASYON_KILAVUZU.md
+DERINLIK_ENTEGRASYONU_TR.md
 ---
 
