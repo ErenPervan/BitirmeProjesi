@@ -1,5 +1,5 @@
 # 🛣️ Otonom Yol Hasarı Değerlendirme Sistemi
-
+- [](image.png)
 Yapay zeka destekli, gerçek zamanlı yol hasarı tespit ve değerlendirme sistemi. YOLOv11 ile hasar tespiti, derinlik analizi ve GPS entegrasyonu içerir.
 
 ## 🎯 Özellikler
@@ -168,7 +168,7 @@ Bu proje MIT Lisansı altında lisanslanmıştır.
 
 Detaylı entegrasyon kılavuzları:
 - [DERINLIK_ENTEGRASYONU](DERINLIK_ENTEGRASYONU_TR.md)
-- [DERINLIK_ENTEGRASYON_KILAVUZU](DERINLIK_ENTEGRASYON_KILAVUZU.md
+- [DERINLIK_ENTEGRASYON_KILAVUZU](DERINLIK_ENTEGRASYON_KILAVUZU.md)
 )
 
 ---
