@@ -28,19 +28,23 @@ pip install -r requirements.txt
 Projenin çalışması için aşağıdaki model dosyalarını indirmeniz gerekmektedir:
 
 1. **YOLOv11 Model**: `best1.engine` veya `YOLOV11M.engine`
-   - Yol hasarı tespiti için eğitilmiş model
-   - Kendiniz eğitebilir veya hazır modeli kullanabilirsiniz
+   - Yol hasarı tespiti için özel eğitilmiş YOLOv11 modeli
+   - **Model İndirme:** [YOLOv11 Road Damage Model](https://github.com/ErenPervan/Yolo11Model)
+   - Model dosyasını proje ana dizinine yerleştirin
+   - Desteklenen formatlar: `.engine` (TensorRT), `.pt` (PyTorch)
 
 2. **Depth Anything V2**: `checkpoints/depth_anything_v2_vits.pth`
-   - İndirme: [Depth Anything V2 GitHub](https://github.com/DepthAnything/Depth-Anything-V2)
+   - Derinlik analizi için monoküler derinlik tahmin modeli
+   - **İndirme:** [Depth Anything V2 GitHub](https://github.com/DepthAnything/Depth-Anything-V2)
    - `checkpoints/` klasörüne yerleştirin
+   - Model boyutu: ~100MB (VITS versiyonu)
 
 ## 🚀 Kurulum
 
 1. **Depoyu Klonlayın**
 ```bash
-git clone https://github.com/yourusername/road-damage-assessment.git
-cd road-damage-assessment
+git clone https://github.com/ErenPervan/BitirmeProjesi.git
+cd BitirmeProjesi
 ```
 
 2. **Sanal Ortam Oluşturun**
@@ -57,8 +61,10 @@ pip install -r requirements.txt
 ```
 
 4. **Model Dosyalarını İndirin**
-   - YOLOv11 modelinizi `best1.engine` olarak kaydedin
-   - Depth Anything V2 modelini `checkpoints/depth_anything_v2_vits.pth` olarak yerleştirin
+   - **YOLOv11 Model**: [Yolo11Model](https://github.com/ErenPervan/Yolo11Model) deposundan indirin
+     - Dosyayı `best1.engine` olarak proje ana dizinine kaydedin
+   - **Depth Anything V2**: [Depth-Anything-V2](https://github.com/DepthAnything/Depth-Anything-V2) deposundan indirin
+     - `depth_anything_v2_vits.pth` dosyasını `checkpoints/` klasörüne yerleştirin
 
 ## 🎮 Kullanım
 
@@ -154,27 +160,15 @@ yolo task=detect mode=train model=yolo11m.pt data=road_damage.yaml epochs=100
 
 Bu proje MIT Lisansı altında lisanslanmıştır.
 
-## 👥 Katkıda Bulunanlar
 
-- Bitirme Projesi Ekibi
 
-## 📧 İletişim
 
-Sorularınız için: [your-email@example.com]
-
-## 🙏 Teşekkürler
-
-- [Ultralytics YOLOv11](https://github.com/ultralytics/ultralytics)
-- [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2)
-- Streamlit Community
 
 ## 📚 Dökümantasyon
 
 Detaylı entegrasyon kılavuzları:
 - [Depth Integration Guide](DEPTH_INTEGRATION_GUIDE.md)
 - [Integration Checklist](INTEGRATION_CHECKLIST.md)
-- [Improvements](IMPROVEMENTS.md)
 
 ---
 
-⭐ Projeyi beğendiyseniz yıldız vermeyi unutmayın!
