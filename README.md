@@ -167,7 +167,6 @@ Bu proje MIT Lisansı altında lisanslanmıştır.
 ## 📚 Dökümantasyon
 
 Detaylı entegrasyon kılavuzları:
-DERINLIK_ENTEGRASYON_KILAVUZU.md
 DERINLIK_ENTEGRASYONU_TR.md
 ---
 
